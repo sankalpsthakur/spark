@@ -131,7 +131,8 @@ class StaxXmlParser(
     // null column values where parsing fails.
     val parseMode =
       if (options.parseMode == PermissiveMode &&
-        !schema.fields.exists(_.name == options.columnNameOfCorruptRecord)) {
+        !schema.fields.exists(
+          f => ExprUtils.isCorruptRecordColumn(f.name, options.columnNameOfCorruptRecord))) {
         DropMalformedMode
       } else {
         options.parseMode
