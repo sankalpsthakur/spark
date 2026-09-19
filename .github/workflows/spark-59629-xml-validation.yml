@@ -4,6 +4,7 @@ on:
   push:
     branches: [validate/spark-59629-xml-20260919]
     paths: [.github/workflows/spark-59629-xml-validation.yml]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -57,6 +58,8 @@ jobs:
           TESTS = '  for {\n    caseSensitive <- Seq("false", "true")\n    corruptName <- Seq("_corrupt_record", "_CORRUPT_RECORD")\n    corruptIndex <- 0 to 2\n  } {\n    test(s"SPARK-59629: from_xml corrupt-record ordinal $corruptIndex, " +\n        s"caseSensitive=$caseSensitive, name=$corruptName") {\n      val good = "<ROW><a>left</a><b>right</b></ROW>"\n      val bad = "<ROW><a>left</ROW>"\n      val dataFields = Seq(StructField("a", StringType), StructField("b", StringType))\n      val fields = dataFields.patch(\n        corruptIndex, Seq(StructField(corruptName, StringType)), 0)\n      val schema = StructType(fields)\n      val capturesCorruptRecord = caseSensitive == "false" || corruptName == "_corrupt_record"\n      val expectedGood = Row.fromSeq(fields.map { field =>\n        field.name match {\n          case "a" => "left"\n          case "b" => "right"\n          case _ => null\n        }\n      })\n      val expectedBad = Row.fromSeq(fields.map { field =>\n        if (capturesCorruptRecord && field.name == corruptName) bad else null\n      })\n      val options = Map("columnNameOfCorruptRecord" -> "_corrupt_record").asJava\n\n      Seq("CODEGEN_ONLY", "NO_CODEGEN").foreach { factoryMode =>\n        withSQLConf(\n          SQLConf.CASE_SENSITIVE.key -> caseSensitive,\n          SQLConf.CODEGEN_FACTORY_MODE.key -> factoryMode,\n          SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> (factoryMode == "CODEGEN_ONLY").toString) {\n          val df = Seq(good, bad).toDF("value").repartition(1)\n          checkAnswer(\n            df.select($"value", from_xml($"value", schema, options)),\n            Seq(Row(good, expectedGood), Row(bad, expectedBad)))\n        }\n      }\n    }\n  }\n\n'
           OLD = '    val rawParser = new StaxXmlParser(schema, rawOptions)\n'
           NEW = '    val actualSchema = if (rawOptions.rootVariantType) {\n      schema\n    } else {\n      ExprUtils.dropCorruptRecordField(schema, parsedOptions.columnNameOfCorruptRecord)\n    }\n    val rawParser = new StaxXmlParser(actualSchema, rawOptions)\n'
+          ORACLE_OLD = '      Row(Row(null, badRec, null)) :: Row(Row(1, null, null)) :: Nil)\n'
+          ORACLE_NEW = '      Row(Row(null, badRec, null)) :: Row(Row(1, null, 12)) :: Nil)\n'
 
 
           def blob_sha(data: bytes) -> str:
@@ -80,6 +83,9 @@ jobs:
                   if content.count(anchor) != 1:
                       raise SystemExit("Test insertion anchor is not unique")
                   content = content.replace(anchor, anchor + TESTS, 1)
+                  if content.count(ORACLE_OLD) != 1:
+                      raise SystemExit("Middle-column oracle is not unique")
+                  content = content.replace(ORACLE_OLD, ORACLE_NEW, 1)
               else:
                   if content.count(OLD) != 1:
                       raise SystemExit("Source replacement anchor is not unique")
@@ -94,6 +100,13 @@ jobs:
           PYCODE
           python3 evidence/prepare.py tests
           git diff -- sql/core/src/test/scala/org/apache/spark/sql/XmlFunctionsSuite.scala > evidence/tests-only.patch
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          patch = Path("evidence/tests-only.patch").read_text()
+          assert "SPARK-59629: from_xml corrupt-record ordinal" in patch
+          assert "-      Row(Row(null, badRec, null)) :: Row(Row(1, null, null)) :: Nil)" in patch
+          assert "+      Row(Row(null, badRec, null)) :: Row(Row(1, null, 12)) :: Nil)" in patch
+          PYCODE
       - name: Require observed failure before the source fix
         run: |
           set -euo pipefail
@@ -128,6 +141,15 @@ jobs:
           set -euo pipefail
           build/sbt -J-Xmx4g "sql/testOnly org.apache.spark.sql.XmlFunctionsSuite" 2>&1 | tee evidence/xml-functions-full.log
           git diff --check
+          python3 - <<'PYCODE'
+          import pathlib, re
+          log = pathlib.Path("evidence/xml-functions-full.log").read_text(errors="replace")
+          log = re.sub(r"\x1b\[[0-9;]*m", "", log)
+          assert "corrupt record column in the middle *** FAILED" not in log
+          assert re.search(r"- corrupt record column in the middle \(\d+ milliseconds\)", log)
+          assert re.search(r"Tests: succeeded 50, failed 0(?:,|$)", log), (
+              "Expected full XmlFunctionsSuite green after JSON-aligned middle-column oracle")
+          PYCODE
       - name: Retain logs and source patch regardless of outcome
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
