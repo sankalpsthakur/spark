@@ -1419,6 +1419,24 @@ class JsonFunctionsSuite extends SharedSparkSession {
       Row(Row(null, badRec, null)) :: Row(Row(2, null, 12)) :: Nil)
   }
 
+  test("SPARK-59629: from_json columnNameOfCorruptRecord honors spark.sql.caseSensitive") {
+    val schema = new StructType()
+      .add("a", IntegerType)
+      .add("_CORRUPT_RECORD", StringType)
+    val df = Seq("""{"a": 1}""", "{").toDS()
+
+    withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
+      checkAnswer(
+        df.select(from_json($"value", schema, Map("mode" -> "PERMISSIVE"))),
+        Row(Row(1, null)) :: Row(Row(null, "{")) :: Nil)
+    }
+    withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+      checkAnswer(
+        df.select(from_json($"value", schema, Map("mode" -> "PERMISSIVE"))),
+        Row(Row(1, null)) :: Row(Row(null, null)) :: Nil)
+    }
+  }
+
   test("parse timestamps with locale") {
     Seq("en-US", "ko-KR", "zh-CN", "ru-RU").foreach { langTag =>
       val locale = Locale.forLanguageTag(langTag)

@@ -35,6 +35,46 @@ import org.apache.spark.sql.types._
 class XmlFunctionsSuite extends SharedSparkSession {
   import testImplicits._
 
+  for {
+    caseSensitive <- Seq("false", "true")
+    corruptName <- Seq("_corrupt_record", "_CORRUPT_RECORD")
+    corruptIndex <- 0 to 2
+  } {
+    test(s"SPARK-59629: from_xml corrupt-record ordinal $corruptIndex, " +
+        s"caseSensitive=$caseSensitive, name=$corruptName") {
+      val good = "<ROW><a>left</a><b>right</b></ROW>"
+      val bad = "<ROW><a>left</ROW>"
+      val dataFields = Seq(StructField("a", StringType), StructField("b", StringType))
+      val fields = dataFields.patch(
+        corruptIndex, Seq(StructField(corruptName, StringType)), 0)
+      val schema = StructType(fields)
+      val capturesCorruptRecord = caseSensitive == "false" || corruptName == "_corrupt_record"
+      val expectedGood = Row.fromSeq(fields.map { field =>
+        field.name match {
+          case "a" => "left"
+          case "b" => "right"
+          case _ => null
+        }
+      })
+      val expectedBad = Row.fromSeq(fields.map { field =>
+        if (capturesCorruptRecord && field.name == corruptName) bad else null
+      })
+      val options = Map("columnNameOfCorruptRecord" -> "_corrupt_record").asJava
+
+      Seq("CODEGEN_ONLY", "NO_CODEGEN").foreach { factoryMode =>
+        withSQLConf(
+          SQLConf.CASE_SENSITIVE.key -> caseSensitive,
+          SQLConf.CODEGEN_FACTORY_MODE.key -> factoryMode,
+          SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> (factoryMode == "CODEGEN_ONLY").toString) {
+          val df = Seq(good, bad).toDF("value").repartition(1)
+          checkAnswer(
+            df.select($"value", from_xml($"value", schema, options)),
+            Seq(Row(good, expectedGood), Row(bad, expectedBad)))
+        }
+      }
+    }
+  }
+
   test("from_xml") {
     val df = Seq("""<ROW><a>1</a></ROW>""").toDS()
     val schema = new StructType().add("a", IntegerType)
@@ -635,7 +675,7 @@ class XmlFunctionsSuite extends SharedSparkSession {
 
     checkAnswer(
       df.select(from_xml($"value", schema, Map("columnNameOfCorruptRecord" -> "_unparsed").asJava)),
-      Row(Row(null, badRec, null)) :: Row(Row(1, null, null)) :: Nil)
+      Row(Row(null, badRec, null)) :: Row(Row(1, null, 12)) :: Nil)
   }
 
   test("parse timestamps with locale") {

@@ -71,11 +71,11 @@ case class CsvToStructsEvaluator(
       nullableSchema,
       parsedOptions.columnNameOfCorruptRecord)
 
-    val actualSchema =
-      StructType(nullableSchema.filterNot(_.name == parsedOptions.columnNameOfCorruptRecord))
-    val actualRequiredSchema =
-      StructType(requiredSchema.map(_.asNullable).getOrElse(nullableSchema)
-        .filterNot(_.name == parsedOptions.columnNameOfCorruptRecord))
+    val actualSchema = ExprUtils.dropCorruptRecordField(
+      nullableSchema, parsedOptions.columnNameOfCorruptRecord)
+    val actualRequiredSchema = ExprUtils.dropCorruptRecordField(
+      requiredSchema.map(_.asNullable).getOrElse(nullableSchema),
+      parsedOptions.columnNameOfCorruptRecord)
     val rawParser = new UnivocityParser(actualSchema,
       actualRequiredSchema,
       parsedOptions)

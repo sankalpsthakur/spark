@@ -1212,6 +1212,39 @@ abstract class JsonSuite
     )
   }
 
+  test("SPARK-59629: columnNameOfCorruptRecord honors spark.sql.caseSensitive") {
+    val schema = new StructType()
+      .add("a", IntegerType)
+      .add("_CORRUPT_RECORD", StringType)
+    val records = Seq("""{"a": 1}""", "{").toDS()
+
+    withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
+      checkAnswer(
+        spark.read.option("mode", "PERMISSIVE").schema(schema).json(records),
+        Row(1, null) :: Row(null, "{") :: Nil)
+    }
+
+    withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+      checkAnswer(
+        spark.read.option("mode", "PERMISSIVE").schema(schema).json(records),
+        Row(1, null) :: Row(null, null) :: Nil)
+    }
+
+    withTempPath { path =>
+      records.toDF("value").write.text(path.getCanonicalPath)
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
+        checkAnswer(
+          spark.read.option("mode", "PERMISSIVE").schema(schema).json(path.getCanonicalPath),
+          Row(1, null) :: Row(null, "{") :: Nil)
+      }
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+        checkAnswer(
+          spark.read.option("mode", "PERMISSIVE").schema(schema).json(path.getCanonicalPath),
+          Row(1, null) :: Row(null, null) :: Nil)
+      }
+    }
+  }
+
   test("SPARK-4068: nulls in arrays") {
     withTempView("jsonTable") {
       val jsonDF = spark.read.json(nullsInArrays)

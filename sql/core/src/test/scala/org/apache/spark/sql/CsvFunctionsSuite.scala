@@ -150,6 +150,25 @@ class CsvFunctionsSuite extends SharedSparkSession {
     }
   }
 
+  test("SPARK-59629: from_csv columnNameOfCorruptRecord honors spark.sql.caseSensitive") {
+    val df = Seq("1,Alice", "invalid,Bob").toDS()
+    val schema = new StructType()
+      .add("id", IntegerType)
+      .add("name", StringType)
+      .add("_CORRUPT_RECORD", StringType)
+
+    withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
+      checkAnswer(
+        df.select(from_csv($"value", schema, Map("mode" -> "PERMISSIVE"))),
+        Seq(Row(Row(1, "Alice", null)), Row(Row(null, "Bob", "invalid,Bob"))))
+    }
+    withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+      checkAnswer(
+        df.select(from_csv($"value", schema, Map("mode" -> "PERMISSIVE"))),
+        Seq(Row(Row(1, "Alice", null)), Row(Row(null, "Bob", null))))
+    }
+  }
+
   test("from_csv with option (escape)") {
     val df = Seq("\"#\"\"").toDS()
     val schema = new StructType().add("str", StringType)
