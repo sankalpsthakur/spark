@@ -1,0 +1,138 @@
+name: SPARK-59629 XML ordinal validation
+
+on:
+  push:
+    branches: [validate/spark-59629-xml-20260919]
+    paths: [.github/workflows/spark-59629-xml-validation.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spark-59629-xml-validation
+  cancel-in-progress: false
+
+jobs:
+  regression:
+    if: github.repository == 'sankalpsthakur/spark'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SPARK_LOCAL_IP: 127.0.0.1
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - name: Fetch exact reviewed source without credentials
+        working-directory: .
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source fetch --no-tags --depth=1 https://github.com/sankalpsthakur/spark.git 26d1517d2ef9d11c51aacaa19c141212ebfb9ba1
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = 26d1517d2ef9d11c51aacaa19c141212ebfb9ba1
+          mkdir -p source/evidence
+          git -C source rev-parse HEAD > source/evidence/base.sha
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
+      - name: Prepare regression only
+        run: |
+          set -euo pipefail
+          java -version 2>&1 | tee evidence/java-version.log
+          cat > evidence/prepare.py <<'PYCODE'
+          #!/usr/bin/env python3
+          """Prepare a narrowly scoped Spark regression; never publish or overwrite concurrent work."""
+          from __future__ import annotations
+          import argparse
+          import hashlib
+          from pathlib import Path
+          import subprocess
+
+          HEAD = "26d1517d2ef9d11c51aacaa19c141212ebfb9ba1"
+          TEST_PATH = Path("sql/core/src/test/scala/org/apache/spark/sql/XmlFunctionsSuite.scala")
+          SOURCE_PATH = Path("sql/catalyst/src/main/scala/org/apache/spark/sql/catalyst/expressions/xml/XmlExpressionEvalUtils.scala")
+          TEST_BLOB = "bfe46e681261fb787d52f9215ceab8691a04c8f4"
+          SOURCE_BLOB = "b1fbccab532e25e611016f6d258c7332be1f1104"
+          TESTS = '  for {\n    caseSensitive <- Seq("false", "true")\n    corruptName <- Seq("_corrupt_record", "_CORRUPT_RECORD")\n    corruptIndex <- 0 to 2\n  } {\n    test(s"SPARK-59629: from_xml corrupt-record ordinal $corruptIndex, " +\n        s"caseSensitive=$caseSensitive, name=$corruptName") {\n      val good = "<ROW><a>left</a><b>right</b></ROW>"\n      val bad = "<ROW><a>left</ROW>"\n      val dataFields = Seq(StructField("a", StringType), StructField("b", StringType))\n      val fields = dataFields.patch(\n        corruptIndex, Seq(StructField(corruptName, StringType)), 0)\n      val schema = StructType(fields)\n      val capturesCorruptRecord = caseSensitive == "false" || corruptName == "_corrupt_record"\n      val expectedGood = Row.fromSeq(fields.map { field =>\n        field.name match {\n          case "a" => "left"\n          case "b" => "right"\n          case _ => null\n        }\n      })\n      val expectedBad = Row.fromSeq(fields.map { field =>\n        if (capturesCorruptRecord && field.name == corruptName) bad else null\n      })\n      val options = Map("columnNameOfCorruptRecord" -> "_corrupt_record").asJava\n\n      Seq("CODEGEN_ONLY", "NO_CODEGEN").foreach { factoryMode =>\n        withSQLConf(\n          SQLConf.CASE_SENSITIVE.key -> caseSensitive,\n          SQLConf.CODEGEN_FACTORY_MODE.key -> factoryMode,\n          SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> (factoryMode == "CODEGEN_ONLY").toString) {\n          val df = Seq(good, bad).toDF("value").repartition(1)\n          checkAnswer(\n            df.select($"value", from_xml($"value", schema, options)),\n            Seq(Row(good, expectedGood), Row(bad, expectedBad)))\n        }\n      }\n    }\n  }\n\n'
+          OLD = '    val rawParser = new StaxXmlParser(schema, rawOptions)\n'
+          NEW = '    val actualSchema = if (rawOptions.rootVariantType) {\n      schema\n    } else {\n      ExprUtils.dropCorruptRecordField(schema, parsedOptions.columnNameOfCorruptRecord)\n    }\n    val rawParser = new StaxXmlParser(actualSchema, rawOptions)\n'
+
+
+          def blob_sha(data: bytes) -> str:
+              return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+
+
+          def main() -> None:
+              parser = argparse.ArgumentParser(description=__doc__)
+              parser.add_argument("phase", choices=("tests", "fix"))
+              args = parser.parse_args()
+              head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+              if head != HEAD:
+                  raise SystemExit(f"Refusing to modify unexpected HEAD: {head}; expected {HEAD}")
+              path, expected = (TEST_PATH, TEST_BLOB) if args.phase == "tests" else (SOURCE_PATH, SOURCE_BLOB)
+              data = path.read_bytes()
+              if blob_sha(data) != expected:
+                  raise SystemExit(f"Refusing to overwrite concurrent/unexpected content: {path}")
+              content = data.decode("utf-8")
+              if args.phase == "tests":
+                  anchor = "  import testImplicits._\n\n"
+                  if content.count(anchor) != 1:
+                      raise SystemExit("Test insertion anchor is not unique")
+                  content = content.replace(anchor, anchor + TESTS, 1)
+              else:
+                  if content.count(OLD) != 1:
+                      raise SystemExit("Source replacement anchor is not unique")
+                  content = content.replace(OLD, NEW, 1)
+              path.write_text(content, encoding="utf-8")
+              subprocess.run(["git", "diff", "--check"], check=True)
+              print(f"Prepared {args.phase}: {path}. Spark runtime tests still required.")
+
+
+          if __name__ == "__main__":
+              main()
+          PYCODE
+          python3 evidence/prepare.py tests
+          git diff -- sql/core/src/test/scala/org/apache/spark/sql/XmlFunctionsSuite.scala > evidence/tests-only.patch
+      - name: Require observed failure before the source fix
+        run: |
+          set -euo pipefail
+          set +e
+          build/sbt -J-Xmx4g "sql/testOnly org.apache.spark.sql.XmlFunctionsSuite -- -z SPARK-59629" 2>&1 | tee evidence/before.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$rc" > evidence/before.exit
+          test "$rc" -ne 0
+          python3 - <<'PYCODE'
+          import pathlib, re
+          log = pathlib.Path("evidence/before.log").read_text(errors="replace")
+          log = re.sub(r"\x1b\[[0-9;]*m", "", log)
+          assert re.search(r"Tests: succeeded 6, failed 6(?:,|$)", log), "Expected six failing ordinal regressions and six passing controls, not a build failure"
+          assert "SPARK-59629: from_xml corrupt-record ordinal" in log
+          PYCODE
+      - name: Apply minimal source fix and require success after
+        run: |
+          set -euo pipefail
+          python3 evidence/prepare.py fix
+          git diff --check
+          git diff -- sql/catalyst/src/main/scala/org/apache/spark/sql/catalyst/expressions/xml/XmlExpressionEvalUtils.scala sql/core/src/test/scala/org/apache/spark/sql/XmlFunctionsSuite.scala > evidence/final.patch
+          build/sbt -J-Xmx4g "sql/testOnly org.apache.spark.sql.XmlFunctionsSuite -- -z SPARK-59629" 2>&1 | tee evidence/after.log
+          python3 - <<'PYCODE'
+          import pathlib, re
+          log = pathlib.Path("evidence/after.log").read_text(errors="replace")
+          log = re.sub(r"\x1b\[[0-9;]*m", "", log)
+          assert re.search(r"Tests: succeeded 12, failed 0(?:,|$)", log), "Expected all 12 registered regression tests to execute and pass"
+          PYCODE
+      - name: Full XML functions suite including existing variant controls
+        run: |
+          set -euo pipefail
+          build/sbt -J-Xmx4g "sql/testOnly org.apache.spark.sql.XmlFunctionsSuite" 2>&1 | tee evidence/xml-functions-full.log
+          git diff --check
+      - name: Retain logs and source patch regardless of outcome
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: spark-59629-xml-validation
+          path: source/evidence/
+          if-no-files-found: error
+          retention-days: 14
