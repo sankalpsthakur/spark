@@ -1,0 +1,146 @@
+name: Apache follow-up checks
+
+on:
+  push:
+    branches: [validate/spark-59629-exact-head-20260920]
+    paths: [.github/workflows/apache-followup-checks.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apache-followup-checks-20260920
+  cancel-in-progress: false
+
+jobs:
+  spark-style:
+    if: github.repository == 'sankalpsthakur/spark'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SOURCE_SHA: 1c72b358e7f5b5deac7fa4c3f4487c2896a2eeae
+    steps:
+      - name: Fetch immutable source without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          git init source
+          git -C source remote add origin https://github.com/sankalpsthakur/spark.git
+          git -C source remote add upstream https://github.com/apache/spark.git
+          git -C source remote -v > evidence/remotes.txt
+          git -C source fetch --no-tags --depth=1 origin "$SOURCE_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git -C source status --porcelain)"
+          git -C source rev-parse HEAD HEAD^{tree} > evidence/source.txt
+          git -C source fetch --no-tags --depth=1 upstream master
+          git -C source log -1 --format='%H %ci' FETCH_HEAD > evidence/upstream.txt
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
+      - name: Catalyst and SQL main and test Scalastyle
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -version 2>&1 | tee ../evidence/java.txt
+          build/sbt -J-Xmx4g "catalyst/scalastyle" "catalyst/Test/scalastyle" \
+            "sql/scalastyle" "sql/Test/scalastyle" < /dev/null \
+            2>&1 | tee ../evidence/scalastyle.log
+      - name: Verify source unchanged
+        if: always()
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git diff --exit-code HEAD
+          git status --short > ../evidence/final-status.txt
+          test -z "$(git status --porcelain)"
+      - name: Retain style evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: spark-style-1c72b358
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+  hive-public-reports:
+    if: github.repository == 'sankalpsthakur/spark'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Retrieve public Sonar and Jenkins evidence with no credentials or retries
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          root = pathlib.Path('reports')
+          root.mkdir()
+          urls = {
+              'sonar': 'https://sonarcloud.io/api/issues/search?' + urllib.parse.urlencode({
+                  'componentKeys': 'apache_hive', 'pullRequest': '6798',
+                  'resolved': 'false', 'ps': '100'}),
+              'jenkins-build': 'https://ci.hive.apache.org/job/hive-precommit/job/PR-6798/4/api/json',
+              'jenkins-tests': 'https://ci.hive.apache.org/job/hive-precommit/job/PR-6798/4/testReport/api/json',
+          }
+          results = []
+          unavailable = False
+          for name, url in urls.items():
+              entry = {'name': name, 'url': url}
+              try:
+                  request = urllib.request.Request(url, headers={'Accept': 'application/json'})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      data = response.read(16 * 1024 * 1024 + 1)
+                      entry.update(status=response.status, final_url=response.url)
+                  if len(data) > 16 * 1024 * 1024:
+                      raise ValueError('Report exceeds size limit')
+                  parsed = json.loads(data)
+                  entry['sha256'] = hashlib.sha256(data).hexdigest()
+                  (root / (name + '.json')).write_bytes(data)
+                  if name == 'sonar':
+                      entry['total'] = parsed.get('total', parsed.get('paging', {}).get('total'))
+                      entry['issues'] = [
+                          {k: issue.get(k) for k in (
+                              'key', 'rule', 'severity', 'component', 'line', 'message',
+                              'status', 'textRange', 'creationDate', 'updateDate')}
+                          for issue in parsed.get('issues', [])]
+                  if name == 'jenkins-build':
+                      entry.update(result=parsed.get('result'), building=parsed.get('building'),
+                                   number=parsed.get('number'), timestamp=parsed.get('timestamp'))
+                  if name == 'jenkins-tests':
+                      entry['counts'] = {k: parsed.get(k) for k in (
+                          'passCount', 'failCount', 'skipCount')}
+                      entry['target_cases'] = [
+                          case for suite in parsed.get('suites', []) for case in suite.get('cases', [])
+                          if any(term in str(case) for term in (
+                              'TestOrderByOrdinalCboDeclineRows', 'TestSemanticAnalyzer',
+                              'order_by_pos_cbo_decline'))]
+              except urllib.error.HTTPError as error:
+                  entry.update(status=error.code, error=str(error))
+                  unavailable = True
+              except Exception as error:
+                  entry['error'] = str(error)
+                  unavailable = True
+              results.append(entry)
+          (root / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
+          print(json.dumps(results, indent=2))
+          if unavailable:
+              raise SystemExit('One or more public reports unavailable; see preserved evidence')
+          PY
+      - name: Retain public reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hive-6798-public-reports
+          path: reports/
+          if-no-files-found: error
+          retention-days: 14
