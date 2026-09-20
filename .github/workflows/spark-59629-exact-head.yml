@@ -1,0 +1,95 @@
+name: SPARK-59629 exact-head validation
+
+on:
+  push:
+    branches: [validate/spark-59629-exact-head-20260920]
+    paths: [.github/workflows/spark-59629-exact-head.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spark-59629-exact-head-20260920
+  cancel-in-progress: false
+
+jobs:
+  regression:
+    if: github.repository == 'sankalpsthakur/spark'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SPARK_LOCAL_IP: 127.0.0.1
+      SOURCE_SHA: 1c72b358e7f5b5deac7fa4c3f4487c2896a2eeae
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - name: Fetch immutable source and record environment
+        working-directory: .
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          git init source
+          git -C source remote add origin https://github.com/sankalpsthakur/spark.git
+          git -C source remote add upstream https://github.com/apache/spark.git
+          git -C source remote -v | tee evidence/remotes.txt
+          git -C source fetch --no-tags --depth=1 origin "$SOURCE_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git -C source status --porcelain)"
+          git -C source rev-parse HEAD HEAD^{tree} > evidence/source.txt
+          git -C source fetch --no-tags --depth=1 upstream master
+          git -C source log -1 --format='%H %ci' FETCH_HEAD > evidence/upstream.txt
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
+      - name: Full XML functions suite
+        run: |
+          set -euo pipefail
+          java -version 2>&1 | tee ../evidence/java.txt
+          build/sbt -J-Xmx4g "sql/testOnly org.apache.spark.sql.XmlFunctionsSuite" \
+            2>&1 | tee ../evidence/xml-full.log
+          python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path('../evidence/xml-full.log').read_text(errors='replace')
+          text = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text)
+          assert re.search(r'Tests: succeeded 50, failed 0(?:,|$)', text), (
+              'Expected all 50 XML tests, including the 12 ordinal cases, to pass')
+          assert 'All tests passed.' in text
+          PY
+      - name: Focused CSV and JSON regression suites
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          build/sbt -J-Xmx4g \
+            "sql/testOnly org.apache.spark.sql.execution.datasources.csv.CSVv1Suite org.apache.spark.sql.execution.datasources.csv.CSVv2Suite org.apache.spark.sql.execution.datasources.json.JsonV1Suite org.apache.spark.sql.execution.datasources.json.JsonV2Suite org.apache.spark.sql.CsvFunctionsSuite org.apache.spark.sql.JsonFunctionsSuite -- -z SPARK-59629" \
+            2>&1 | tee ../evidence/csv-json-focused.log
+          python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path('../evidence/csv-json-focused.log').read_text(errors='replace')
+          text = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text)
+          for suite in ('CSVv1Suite', 'CSVv2Suite', 'JsonV1Suite', 'JsonV2Suite',
+                        'CsvFunctionsSuite', 'JsonFunctionsSuite'):
+              assert suite + ':' in text, f'Missing suite: {suite}'
+          assert re.search(r'Suites: completed 6, aborted 0', text), 'Incomplete suite execution'
+          assert re.search(r'Tests: succeeded [1-9][0-9]*, failed 0(?:,|$)', text), (
+              'Expected a positive test count with no failures')
+          assert 'All tests passed.' in text
+          PY
+      - name: Verify source unchanged
+        if: success() || failure()
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git diff --exit-code HEAD
+          git diff --check
+          git status --short > ../evidence/final-status.txt
+      - name: Retain exact-head logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: spark-59629-exact-head-1c72b358
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
