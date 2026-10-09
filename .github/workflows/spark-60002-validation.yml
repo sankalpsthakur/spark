@@ -1,0 +1,24 @@
+# Fork-only focused validation for apache/spark#59264 (SPARK-60002). Not part of the PR.
+name: SPARK-60002 hive validation
+on:
+  push:
+    branches:
+      - 'validate/spark-60002-**'
+permissions:
+  contents: read
+jobs:
+  hive-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Show the commits under test
+        run: git log --oneline -4
+      - name: Run the SPARK-60002 Hive tests in InsertSuite
+        env:
+          SBT_OPTS: -Xss4m -XX:ReservedCodeCacheSize=512m
+        run: ./build/sbt -Phive "hive/testOnly org.apache.spark.sql.hive.InsertSuite -- -z SPARK-60002"
