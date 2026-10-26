@@ -1127,21 +1127,30 @@ object OptimizeOneRowRelationSubquery extends Rule[LogicalPlan] {
    */
   private def rewrite(plan: LogicalPlan): LogicalPlan = plan.transformUpWithSubqueries {
     case LateralJoin(
-      left, right @ LateralSubquery(OneRowSubquery(plan), _, _, _, _), _, None)
+      left, right @ LateralSubquery(OneRowSubquery(plan), _, _, _, _), joinType, None)
         if !hasCorrelatedSubquery(right.plan) && right.joinCond.isEmpty =>
       plan match {
         case Project(projectList, _: OneRowRelation) =>
           val newPList = stripOuterReferences(projectList)
           Project(left.output ++ newPList, left)
 
+        // SPARK-60564: LEFT OUTER must keep unmatched left rows when the generator is empty.
         case g @ Generate(generator, _, _, _, _, _: OneRowRelation) =>
           val newGenerator = stripOuterReference(generator)
-          g.copy(generator = newGenerator, child = left)
+          g.copy(
+            generator = newGenerator,
+            child = left,
+            outer = g.outer || joinType == LeftOuter)
 
         case Project(projectList, g @ Generate(generator, _, _, _, _, _: OneRowRelation)) =>
           val newPList = stripOuterReferences(projectList)
           val newGenerator = stripOuterReference(generator)
-          Project(left.output ++ newPList, g.copy(generator = newGenerator, child = left))
+          Project(
+            left.output ++ newPList,
+            g.copy(
+              generator = newGenerator,
+              child = left,
+              outer = g.outer || joinType == LeftOuter))
 
         case o =>
           throw SparkException.internalError(

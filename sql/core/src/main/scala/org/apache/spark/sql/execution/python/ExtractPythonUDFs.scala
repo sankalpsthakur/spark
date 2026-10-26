@@ -399,16 +399,17 @@ object ExtractPythonUDTFs extends Rule[LogicalPlan] {
     case s: Subquery if s.correlated => plan
 
     case _ => plan.transformUpWithPruning(_.containsPattern(GENERATE)) {
-      case g @ Generate(func: PythonUDTF, _, _, _, _, child) => func.evalType match {
-        case PythonEvalType.SQL_TABLE_UDF =>
-          BatchEvalPythonUDTF(func, g.requiredChildOutput, g.generatorOutput, child)
-        case PythonEvalType.SQL_ARROW_TABLE_UDF =>
-          ArrowEvalPythonUDTF(func, g.requiredChildOutput, g.generatorOutput, child, func.evalType)
-        case PythonEvalType.SQL_ARROW_UDTF =>
-          ArrowEvalPythonUDTF(func, g.requiredChildOutput, g.generatorOutput, child, func.evalType)
-        case _ =>
-          throw SparkException.internalError(s"Unsupported UDTF eval type: ${func.evalType}")
-      }
+      case g @ Generate(func: PythonUDTF, _, outer, _, _, child) =>
+        val resultAttrs = if (outer) g.nullableOutput else g.generatorOutput
+        func.evalType match {
+          case PythonEvalType.SQL_TABLE_UDF =>
+            BatchEvalPythonUDTF(func, g.requiredChildOutput, resultAttrs, child, outer)
+          case PythonEvalType.SQL_ARROW_TABLE_UDF | PythonEvalType.SQL_ARROW_UDTF =>
+            ArrowEvalPythonUDTF(
+              func, g.requiredChildOutput, resultAttrs, child, func.evalType, outer)
+          case _ =>
+            throw SparkException.internalError(s"Unsupported UDTF eval type: ${func.evalType}")
+        }
     }
   }
 }

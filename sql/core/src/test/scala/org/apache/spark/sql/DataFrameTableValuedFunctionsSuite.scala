@@ -69,6 +69,10 @@ class DataFrameTableValuedFunctionsSuite extends SharedSparkSession {
         sql("SELECT * FROM t3, LATERAL EXPLODE(c2) t2(v)")
       )
       checkAnswer(
+        t3.lateralJoin(spark.tvf.explode($"c2".outer()).toDF("v").as("t2"), "left"),
+        sql("SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t2(v) ON TRUE")
+      )
+      checkAnswer(
         spark.tvf.explode(array(lit(1), lit(2))).toDF("v")
           .lateralJoin(spark.range(1).select($"v".outer() + lit(1))),
         sql("SELECT * FROM EXPLODE(ARRAY(1, 2)) t(v), LATERAL (SELECT v + 1)")
@@ -163,6 +167,10 @@ class DataFrameTableValuedFunctionsSuite extends SharedSparkSession {
       checkAnswer(
         arrayStruct.lateralJoin(spark.tvf.inline($"arr".outer())),
         sql("SELECT * FROM array_struct JOIN LATERAL INLINE(arr)")
+      )
+      checkAnswer(
+        arrayStruct.lateralJoin(spark.tvf.inline($"arr".outer()), "left"),
+        sql("SELECT * FROM array_struct LEFT JOIN LATERAL INLINE(arr) ON TRUE")
       )
       checkAnswer(
         arrayStruct.lateralJoin(

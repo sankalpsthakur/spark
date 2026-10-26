@@ -465,6 +465,8 @@ CREATE OR REPLACE TEMPORARY VIEW array_struct(id, arr) AS VALUES
 SELECT * FROM t1, LATERAL INLINE(ARRAY(STRUCT(1, 'a'), STRUCT(2, 'b')));
 SELECT c1, t.* FROM t1, LATERAL INLINE(ARRAY(STRUCT(1, 'a'), STRUCT(2, 'b'))) t(x, y);
 SELECT * FROM array_struct JOIN LATERAL INLINE(arr);
+SELECT * FROM array_struct LEFT JOIN LATERAL INLINE(arr);
+SELECT * FROM array_struct LEFT JOIN LATERAL INLINE(arr) ON TRUE;
 SELECT * FROM array_struct LEFT JOIN LATERAL INLINE(arr) t(k, v) ON id = k;
 SELECT * FROM array_struct JOIN LATERAL INLINE_OUTER(arr);
 DROP VIEW array_struct;
@@ -476,6 +478,8 @@ SELECT * FROM t1 JOIN LATERAL posexplode(ARRAY(c1, c2)) t(pos, c3) ON t1.c1 = c3
 SELECT * FROM t3, LATERAL posexplode(c2) t2(pos, v);
 SELECT * FROM t3 JOIN LATERAL posexplode(c2) t(pos, c3) ON t3.c1 = c3;
 SELECT * FROM t3, LATERAL posexplode_outer(c2) t2(pos, v);
+SELECT * FROM t3 LEFT JOIN LATERAL posexplode(c2);
+SELECT * FROM t3 LEFT JOIN LATERAL posexplode(c2) ON TRUE;
 SELECT * FROM t3 LEFT JOIN LATERAL posexplode(c2) t(pos, c3) ON t3.c1 = c3;
 SELECT * FROM t3 LEFT JOIN LATERAL posexplode_outer(c2) t(pos, c3) ON t3.c1 = c3;
 
@@ -581,6 +585,22 @@ LATERAL (SELECT v1 AS leaked);
 WITH cte1(k, v1) AS (VALUES (1, 'a'), (2, 'b'), (3, 'c'))
 SELECT * FROM (SELECT k FROM cte1 GROUP BY k) g,
 LATERAL (SELECT v1 AS leaked);
+
+-- SPARK-60564: LEFT JOIN LATERAL with generators and no ON preserves unmatched left rows
+SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2);
+SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) ON TRUE;
+SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t(c3);
+SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t(c3) ON TRUE;
+SELECT * FROM VALUES
+  (1, ARRAY(1, 2)),
+  (2, ARRAY()),
+  (3, CAST(NULL AS ARRAY<INT>)) AS t(k, a)
+LEFT JOIN LATERAL EXPLODE(a);
+SELECT * FROM VALUES
+  (1, ARRAY(1, 2)),
+  (2, ARRAY()),
+  (3, CAST(NULL AS ARRAY<INT>)) AS t(k, a)
+LEFT JOIN LATERAL EXPLODE(a) ON TRUE;
 
 -- clean up
 DROP VIEW t1;

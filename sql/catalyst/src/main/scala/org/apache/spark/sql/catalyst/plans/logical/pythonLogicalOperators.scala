@@ -304,6 +304,9 @@ trait BaseEvalPythonUDTF extends UnaryNode {
 
   def resultAttrs: Seq[Attribute]
 
+  /** When true, emit a null-padded row if the UDTF produces no rows for an input. */
+  def outer: Boolean = false
+
   override def output: Seq[Attribute] = requiredChildOutput ++ resultAttrs
 
   override def producedAttributes: AttributeSet = AttributeSet(resultAttrs)
@@ -342,12 +345,14 @@ case class ArrowEvalPython(
  *                            generation that will be discarded next by a projection.
  * @param resultAttrs the output schema of the Python UDTF.
  * @param child the child plan
+ * @param outer when true, each input row is output at least once even if the UDTF is empty.
  */
 case class BatchEvalPythonUDTF(
     udtf: PythonUDTF,
     requiredChildOutput: Seq[Attribute],
     resultAttrs: Seq[Attribute],
-    child: LogicalPlan) extends BaseEvalPythonUDTF {
+    child: LogicalPlan,
+    outer: Boolean = false) extends BaseEvalPythonUDTF {
   override protected def withNewChildInternal(newChild: LogicalPlan): BatchEvalPythonUDTF =
     copy(child = newChild)
 }
@@ -360,13 +365,16 @@ case class BatchEvalPythonUDTF(
  *                            generation that will be discarded next by a projection.
  * @param resultAttrs the output schema of the Python UDTF.
  * @param child the child plan
+ * @param evalType the Python eval type.
+ * @param outer when true, each input row is output at least once even if the UDTF is empty.
  */
 case class ArrowEvalPythonUDTF(
     udtf: PythonUDTF,
     requiredChildOutput: Seq[Attribute],
     resultAttrs: Seq[Attribute],
     child: LogicalPlan,
-    evalType: Int) extends BaseEvalPythonUDTF {
+    evalType: Int,
+    outer: Boolean = false) extends BaseEvalPythonUDTF {
   override protected def withNewChildInternal(newChild: LogicalPlan): ArrowEvalPythonUDTF =
     copy(child = newChild)
 }

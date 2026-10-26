@@ -42,6 +42,9 @@ trait EvalPythonUDTFExec extends UnaryExecNode {
 
   def resultAttrs: Seq[Attribute]
 
+  /** When true, emit a null-padded row if the UDTF produces no rows for an input. */
+  def outer: Boolean
+
   override def output: Seq[Attribute] = requiredChildOutput ++ resultAttrs
 
   override def producedAttributes: AttributeSet = AttributeSet(resultAttrs)
@@ -122,7 +125,8 @@ trait EvalPythonUDTFExec extends UnaryExecNode {
         // If `count` is greater than zero, it means there are remaining input rows in the queue.
         // In this case, the output rows of the UDTF are joined with the corresponding input row
         // in the queue.
-        if (count > 0) {
+        val hasLeft = count > 0
+        if (hasLeft) {
           val left = queue.remove()
           count -= 1
           joined.withLeft(pruneChildForResult(left))
@@ -131,13 +135,23 @@ trait EvalPythonUDTFExec extends UnaryExecNode {
         // from the UDTF are from the `terminate()` call. We leave the left side as the last
         // element of its child output to keep it consistent with the Generate implementation
         // and Hive UDTFs.
-        outputRows.map { r =>
-          // When the UDTF's result is None, such as `def eval(): yield`,
-          // we join it with a null row to avoid NullPointerException.
-          if (r == null) {
-            resultProj(joined.withRight(nullRow))
+        // SPARK-60564: LEFT OUTER / LATERAL VIEW OUTER must keep the left row when the UDTF
+        // yields no rows.
+        if (!outputRows.hasNext) {
+          if (outer && hasLeft) {
+            Iterator.single(resultProj(joined.withRight(nullRow)))
           } else {
-            resultProj(joined.withRight(r))
+            Iterator.empty
+          }
+        } else {
+          outputRows.map { r =>
+            // When the UDTF's result is None, such as `def eval(): yield`,
+            // we join it with a null row to avoid NullPointerException.
+            if (r == null) {
+              resultProj(joined.withRight(nullRow))
+            } else {
+              resultProj(joined.withRight(r))
+            }
           }
         }
       }

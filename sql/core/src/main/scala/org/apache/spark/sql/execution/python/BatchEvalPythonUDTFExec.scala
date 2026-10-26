@@ -42,12 +42,14 @@ import org.apache.spark.sql.types.StructType
  *                            generation that will be discarded next by a projection.
  * @param resultAttrs the output schema of the Python UDTF.
  * @param child the child plan
+ * @param outer when true, each input row is output at least once even if the UDTF is empty.
  */
 case class BatchEvalPythonUDTFExec(
     udtf: PythonUDTF,
     requiredChildOutput: Seq[Attribute],
     resultAttrs: Seq[Attribute],
-    child: SparkPlan)
+    child: SparkPlan,
+    outer: Boolean = false)
   extends EvalPythonUDTFExec with PythonPickleBatchMetrics {
 
   private[this] val jobArtifactUUID = JobArtifactSet.getCurrentJobArtifactState.map(_.uuid)

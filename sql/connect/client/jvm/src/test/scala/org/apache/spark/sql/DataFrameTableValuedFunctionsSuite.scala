@@ -68,6 +68,9 @@ class DataFrameTableValuedFunctionsSuite extends QueryTest with RemoteSparkSessi
         t3.lateralJoin(spark.tvf.explode($"c2".outer()).toDF("v").as("t2")),
         sql("SELECT * FROM t3, LATERAL EXPLODE(c2) t2(v)"))
       checkAnswer(
+        t3.lateralJoin(spark.tvf.explode($"c2".outer()).toDF("v").as("t2"), "left"),
+        sql("SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t2(v) ON TRUE"))
+      checkAnswer(
         spark.tvf
           .explode(array(lit(1), lit(2)))
           .toDF("v")
@@ -162,6 +165,9 @@ class DataFrameTableValuedFunctionsSuite extends QueryTest with RemoteSparkSessi
       checkAnswer(
         arrayStruct.lateralJoin(spark.tvf.inline($"arr".outer())),
         sql("SELECT * FROM array_struct JOIN LATERAL INLINE(arr)"))
+      checkAnswer(
+        arrayStruct.lateralJoin(spark.tvf.inline($"arr".outer()), "left"),
+        sql("SELECT * FROM array_struct LEFT JOIN LATERAL INLINE(arr) ON TRUE"))
       checkAnswer(
         arrayStruct.lateralJoin(
           spark.tvf.inline($"arr".outer()).toDF("k", "v").as("t"),

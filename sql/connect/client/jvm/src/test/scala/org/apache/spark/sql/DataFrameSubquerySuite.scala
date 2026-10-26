@@ -752,6 +752,22 @@ class DataFrameSubquerySuite extends QueryTest with RemoteSparkSession {
     }
   }
 
+  test("SPARK-60564: left lateral join with generator and no ON") {
+    withView("t3") {
+      val t3 = table3()
+      val expected = sql("SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t(c3) ON TRUE")
+      checkAnswer(
+        sql("SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2)"),
+        expected)
+      checkAnswer(
+        sql("SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t(c3)"),
+        expected)
+      checkAnswer(
+        t3.lateralJoin(spark.tvf.explode($"c2".outer()), "left"),
+        expected)
+    }
+  }
+
   test("subquery with generator / table-valued functions") {
     withView("t1") {
       val t1 = table1()
