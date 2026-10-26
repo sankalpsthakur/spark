@@ -74,6 +74,15 @@ class TVFTestsMixin:
                 self.spark.sql("""SELECT * FROM t3, LATERAL EXPLODE(c2) t2(v)"""),
             )
             assertDataFrameEqual(
+                t3.lateralJoin(
+                    self.spark.tvf.explode(sf.col("c2").outer()).toDF("v").alias("t2"),
+                    how="left",
+                ),
+                self.spark.sql(
+                    """SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t2(v) ON TRUE"""
+                ),
+            )
+            assertDataFrameEqual(
                 self.spark.tvf.explode(sf.array(sf.lit(1), sf.lit(2)))
                 .toDF("v")
                 .lateralJoin(
@@ -187,6 +196,14 @@ class TVFTestsMixin:
             assertDataFrameEqual(
                 array_struct.lateralJoin(self.spark.tvf.inline(sf.col("arr").outer())),
                 self.spark.sql("""SELECT * FROM array_struct JOIN LATERAL INLINE(arr)"""),
+            )
+            assertDataFrameEqual(
+                array_struct.lateralJoin(
+                    self.spark.tvf.inline(sf.col("arr").outer()), how="left"
+                ),
+                self.spark.sql(
+                    """SELECT * FROM array_struct LEFT JOIN LATERAL INLINE(arr) ON TRUE"""
+                ),
             )
             assertDataFrameEqual(
                 array_struct.lateralJoin(

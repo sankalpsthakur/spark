@@ -47,6 +47,11 @@ SELECT id, elem
 FROM nested LEFT JOIN LATERAL UNNEST(xs) AS t(elem) ON true
 ORDER BY id, elem;
 
+-- SPARK-60564: the same without an ON clause.
+SELECT id, elem
+FROM nested LEFT JOIN LATERAL UNNEST(xs) AS t(elem)
+ORDER BY id, elem;
+
 -- Nested arrays: the element type is preserved as-is (a single array-typed column).
 SELECT * FROM UNNEST(array(array(1, 2), array(3))) AS t(inner);
 

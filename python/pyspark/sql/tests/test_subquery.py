@@ -1032,6 +1032,23 @@ class SubqueryTestsMixin:
                 ),
             )
 
+    def test_left_lateral_join_generator_without_on(self):
+        with self.temp_view("t3"):
+            t3 = self.table3()
+            expected = self.spark.sql(
+                """SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t(c3) ON TRUE"""
+            )
+            assertDataFrameEqual(
+                self.spark.sql("""SELECT * FROM t3 LEFT JOIN LATERAL EXPLODE(c2) t(c3)"""),
+                expected,
+            )
+            assertDataFrameEqual(
+                t3.lateralJoin(self.spark.tvf.explode(sf.col("c2").outer()), how="left").toDF(
+                    "c1", "c2", "c3"
+                ),
+                expected,
+            )
+
     def test_subquery_with_generator_and_tvf(self):
         with self.temp_view("t1"):
             t1 = self.table1()

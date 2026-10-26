@@ -39,13 +39,15 @@ import org.apache.spark.sql.vectorized.{ArrowColumnVector, ColumnarBatch}
  * @param resultAttrs the output schema of the Python UDTF.
  * @param child the child plan.
  * @param evalType the Python eval type.
+ * @param outer when true, each input row is output at least once even if the UDTF is empty.
  */
 case class ArrowEvalPythonUDTFExec(
     udtf: PythonUDTF,
     requiredChildOutput: Seq[Attribute],
     resultAttrs: Seq[Attribute],
     child: SparkPlan,
-    evalType: Int)
+    evalType: Int,
+    outer: Boolean = false)
   extends EvalPythonUDTFExec with PythonSQLMetrics {
 
   private val batchSize = conf.arrowMaxRecordsPerBatch

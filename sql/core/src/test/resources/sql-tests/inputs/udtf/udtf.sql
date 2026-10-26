@@ -14,7 +14,10 @@ SELECT a, b FROM udtf(1, 2) t(a, b);
 
 -- test lateral join
 SELECT * FROM t1, LATERAL udtf(c1, c2);
+-- SPARK-60564: LEFT JOIN LATERAL UDTF without ON preserves rows when the UDTF yields empty
 SELECT * FROM t1 LEFT JOIN LATERAL udtf(c1, c2);
+SELECT * FROM t1 LEFT JOIN LATERAL udtf(c1, c2) ON TRUE;
+SELECT * FROM t1 LATERAL VIEW OUTER udtf(c1, c2) t AS x, y;
 SELECT * FROM udtf(1, 2) t(c1, c2), LATERAL udtf(c1, c2);
 
 -- test non-deterministic input

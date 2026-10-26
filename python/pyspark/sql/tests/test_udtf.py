@@ -284,6 +284,19 @@ class BaseUDTFTestsMixin:
             ],
         )
 
+        # SPARK-60564: LEFT JOIN LATERAL must keep left rows when the UDTF yields no rows
+        assertDataFrameEqual(
+            self.spark.range(3, numPartitions=1).lateralJoin(
+                TestUDTF(col("id").outer()), how="left"
+            ),
+            [
+                Row(id=0, a=None),
+                Row(id=1, a=0),
+                Row(id=2, a=0),
+                Row(id=2, a=1),
+            ],
+        )
+
     def test_udtf_eval_with_return_stmt(self):
         class TestUDTF:
             def eval(self, a: int, b: int):

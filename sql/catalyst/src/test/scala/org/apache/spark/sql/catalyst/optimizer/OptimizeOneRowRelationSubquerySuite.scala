@@ -178,6 +178,29 @@ class OptimizeOneRowRelationSubquerySuite extends PlanTest {
     assertHasDomainJoin(optimized)
   }
 
+  test("SPARK-60564: LEFT OUTER lateral Generate sets outer = true") {
+    val query1 = t3.lateralJoin(t0.generate(Explode($"arr")), LeftOuter, None)
+    comparePlans(
+      Optimize.execute(query1.analyze),
+      t3.generate(Explode($"arr"), outer = true).analyze)
+
+    val query2 = t3.lateralJoin(
+      UnresolvedTableValuedFunction("explode", $"arr" :: Nil), LeftOuter, None)
+    comparePlans(
+      Optimize.execute(query2.analyze),
+      t3.generate(Explode($"arr"), outer = true).analyze)
+
+    val query3 = t3.lateralJoin(
+      SubqueryAlias("t",
+        UnresolvedTVFAliases("explode" :: Nil,
+          UnresolvedTableValuedFunction("explode", $"arr" :: Nil), "v" :: Nil)),
+      LeftOuter, None)
+    comparePlans(
+      Optimize.execute(query3.analyze),
+      t3.generate(Explode($"arr"), outer = true)
+        .select($"a", $"b", $"arr", $"col".as("v")).analyze)
+  }
+
   test("SPARK-41961: optimize lateral subquery with table-valued functions") {
     // SELECT * FROM t3 JOIN LATERAL EXPLODE(arr)
     val query1 = t3.lateralJoin(UnresolvedTableValuedFunction("explode", $"arr" :: Nil))
