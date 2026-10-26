@@ -184,7 +184,7 @@ class DataFrameReader private[sql](sparkSession: SparkSession)
 
     ExprUtils.verifyColumnNameOfCorruptRecord(schema, parsedOptions.columnNameOfCorruptRecord)
     val actualSchema =
-      StructType(schema.filterNot(_.name == parsedOptions.columnNameOfCorruptRecord))
+      ExprUtils.dropCorruptRecordField(schema, parsedOptions.columnNameOfCorruptRecord)
 
     val createParser = CreateJacksonParser.string _
     val parsed = jsonDataset.rdd.mapPartitions { iter =>
@@ -238,7 +238,7 @@ class DataFrameReader private[sql](sparkSession: SparkSession)
 
     ExprUtils.verifyColumnNameOfCorruptRecord(schema, parsedOptions.columnNameOfCorruptRecord)
     val actualSchema =
-      StructType(schema.filterNot(_.name == parsedOptions.columnNameOfCorruptRecord))
+      ExprUtils.dropCorruptRecordField(schema, parsedOptions.columnNameOfCorruptRecord)
 
     val linesWithoutHeader: RDD[String] = maybeFirstLine.map { firstLine =>
       val headerChecker = new CSVHeaderChecker(
@@ -291,7 +291,7 @@ class DataFrameReader private[sql](sparkSession: SparkSession)
 
     ExprUtils.verifyColumnNameOfCorruptRecord(schema, parsedOptions.columnNameOfCorruptRecord)
     val actualSchema =
-      StructType(schema.filterNot(_.name == parsedOptions.columnNameOfCorruptRecord))
+      ExprUtils.dropCorruptRecordField(schema, parsedOptions.columnNameOfCorruptRecord)
 
     val parsed = xmlDataset.rdd.mapPartitions { iter =>
       val rawParser = new StaxXmlParser(actualSchema, parsedOptions)

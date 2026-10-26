@@ -1597,6 +1597,63 @@ abstract class CSVSuite
     }
   }
 
+  test("SPARK-59629: columnNameOfCorruptRecord honors spark.sql.caseSensitive") {
+    withTempPath { path =>
+      Files.write(
+        path.toPath,
+        "id,name\n1,Alice\ninvalid,Bob".getBytes(StandardCharsets.UTF_8))
+      val schema = new StructType()
+        .add("id", IntegerType)
+        .add("name", StringType)
+        .add("_CORRUPT_RECORD", StringType)
+      val ds = Seq("1,Alice", "invalid,Bob").toDS()
+
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
+        val expected = Row(1, "Alice", null) :: Row(null, "Bob", "invalid,Bob") :: Nil
+        val fileDf = spark.read
+          .option("header", "true")
+          .option("mode", "PERMISSIVE")
+          .schema(schema)
+          .csv(path.getAbsolutePath)
+        checkAnswer(fileDf, expected)
+        checkAnswer(
+          spark.read.option("mode", "PERMISSIVE").schema(schema).csv(ds),
+          expected)
+
+        val badSchema = new StructType()
+          .add("id", IntegerType)
+          .add("name", StringType)
+          .add("_CORRUPT_RECORD", IntegerType)
+        checkError(
+          exception = intercept[AnalysisException] {
+            spark.read
+              .option("header", "true")
+              .option("mode", "PERMISSIVE")
+              .schema(badSchema)
+              .csv(path.getAbsolutePath)
+              .collect()
+          },
+          condition = "INVALID_CORRUPT_RECORD_TYPE",
+          parameters = Map(
+            "columnName" -> toSQLId("_corrupt_record"), "actualType" -> "\"INT\"")
+        )
+      }
+
+      withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
+        val expected = Row(1, "Alice", null) :: Row(null, "Bob", null) :: Nil
+        val fileDf = spark.read
+          .option("header", "true")
+          .option("mode", "PERMISSIVE")
+          .schema(schema)
+          .csv(path.getAbsolutePath)
+        checkAnswer(fileDf, expected)
+        checkAnswer(
+          spark.read.option("mode", "PERMISSIVE").schema(schema).csv(ds),
+          expected)
+      }
+    }
+  }
+
   test("Enabling/disabling ignoreCorruptFiles/ignoreMissingFiles") {
     withCorruptFile(inputFile => {
       withSQLConf(SQLConf.IGNORE_CORRUPT_FILES.key -> "false") {

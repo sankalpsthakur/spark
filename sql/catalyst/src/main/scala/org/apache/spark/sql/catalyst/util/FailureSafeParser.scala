@@ -18,7 +18,7 @@
 package org.apache.spark.sql.catalyst.util
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
+import org.apache.spark.sql.catalyst.expressions.{ExprUtils, GenericInternalRow}
 import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
@@ -29,8 +29,10 @@ class FailureSafeParser[IN](
     schema: StructType,
     columnNameOfCorruptRecord: String) {
 
-  private val corruptFieldIndex = schema.getFieldIndex(columnNameOfCorruptRecord)
-  private val actualSchema = StructType(schema.filterNot(_.name == columnNameOfCorruptRecord))
+  private val corruptFieldIndex =
+    ExprUtils.getCorruptRecordFieldIndex(schema, columnNameOfCorruptRecord)
+  private val actualSchema =
+    ExprUtils.dropCorruptRecordField(schema, columnNameOfCorruptRecord)
   private val resultRow = new GenericInternalRow(schema.length)
   private val nullResult = new GenericInternalRow(schema.length)
 

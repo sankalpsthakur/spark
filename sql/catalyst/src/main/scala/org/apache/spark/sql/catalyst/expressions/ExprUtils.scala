@@ -96,13 +96,47 @@ object ExprUtils extends EvalHelper with QueryErrorsBase {
   }
 
   /**
+   * Returns whether `fieldName` is the corrupt-record column, honoring
+   * `spark.sql.caseSensitive`.
+   */
+  def isCorruptRecordColumn(
+      fieldName: String,
+      columnNameOfCorruptRecord: String): Boolean = {
+    SQLConf.get.resolver(fieldName, columnNameOfCorruptRecord)
+  }
+
+  /**
+   * Looks up the corrupt-record field in `schema`, honoring `spark.sql.caseSensitive`.
+   */
+  def getCorruptRecordFieldIndex(
+      schema: StructType,
+      columnNameOfCorruptRecord: String): Option[Int] = {
+    if (SQLConf.get.caseSensitiveAnalysis) {
+      schema.getFieldIndex(columnNameOfCorruptRecord)
+    } else {
+      schema.getFieldIndexCaseInsensitive(columnNameOfCorruptRecord)
+    }
+  }
+
+  /**
+   * Drops the corrupt-record field from `schema` if present, honoring
+   * `spark.sql.caseSensitive`.
+   */
+  def dropCorruptRecordField(
+      schema: StructType,
+      columnNameOfCorruptRecord: String): StructType = {
+    StructType(schema.filterNot(
+      f => isCorruptRecordColumn(f.name, columnNameOfCorruptRecord)))
+  }
+
+  /**
    * A convenient function for schema validation in datasources supporting
    * `columnNameOfCorruptRecord` as an option.
    */
   def verifyColumnNameOfCorruptRecord(
       schema: StructType,
       columnNameOfCorruptRecord: String): Unit = {
-    schema.getFieldIndex(columnNameOfCorruptRecord).foreach { corruptFieldIndex =>
+    getCorruptRecordFieldIndex(schema, columnNameOfCorruptRecord).foreach { corruptFieldIndex =>
       val f = schema(corruptFieldIndex)
       if (!f.dataType.isInstanceOf[StringType] || !f.nullable) {
         throw QueryCompilationErrors.invalidFieldTypeForCorruptRecordError(

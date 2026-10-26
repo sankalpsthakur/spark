@@ -167,7 +167,12 @@ case class XmlToStructsEvaluator(
         (s, parsedOptions)
     }
 
-    val rawParser = new StaxXmlParser(schema, rawOptions)
+    val actualSchema = if (rawOptions.rootVariantType) {
+      schema
+    } else {
+      ExprUtils.dropCorruptRecordField(schema, parsedOptions.columnNameOfCorruptRecord)
+    }
+    val rawParser = new StaxXmlParser(actualSchema, rawOptions)
     val xsdSchema = Option(parsedOptions.rowValidationXSDPath).map(ValidatorUtil.getSchema)
 
     new FailureSafeParser[String](
